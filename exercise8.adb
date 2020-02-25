@@ -8,60 +8,58 @@ procedure exercise8 is
 
     protected type Transaction_Manager (N : Positive) is
         entry Finished;
-        function Commit return Boolean;
         procedure Signal_Abort;
+        entry Wait_Until_Aborted;
     private
         Finished_Gate_Open  : Boolean := False;
         Aborted             : Boolean := False;
-        Should_Commit       : Boolean := True;
     end Transaction_Manager;
     protected body Transaction_Manager is
         entry Finished when Finished_Gate_Open or Finished'Count = N is
         begin
-	   
+
 	   ------------------------------------------
 	   -- PART 3: Modify the Finished entry
-	   ------------------------------------------
-	   
-	   if Finished'Count = N-1 then
-	      Finished_Gate_Open := True;
-	      Should_Commit := not Aborted;
-	   end if;
-	   
-	   if Finished'Count = 0 then
-	      Finished_Gate_Open := False;
-	      Aborted := False;
-	   end if;
-	   
-        end Finished;
 
+    	  if Finished'Count = N-1 then
+    	      Finished_Gate_Open := True;
+    	  end if;
+
+    	  if Finished'Count = 0 then
+    	      Finished_Gate_Open := False;
+            Aborted := False;
+    	  end if;
+
+        end Finished;
+	   ------------------------------------------
         procedure Signal_Abort is
         begin
             Aborted := True;
         end Signal_Abort;
 
-        function Commit return Boolean is
-        begin
-	   return Should_Commit; 
-	end Commit;
-	
 	------------------------------------------
 	-- PART 2: Create the Wait_Until_Aborted entry
+
+        entry Wait_Until_Aborted when Aborted is  -- run this if Aborted == True
+        begin
+          if Wait_Until_Aborted'Count = 0 then  -- if all participants are here
+            Aborted := False;
+          end if;
+        end Wait_Until_Aborted;
 	------------------------------------------
-        
     end Transaction_Manager;
 
 
 
-    
+
     function Unreliable_Slow_Add (x : Integer) return Integer is
     Error_Rate : Constant := 0.15;  -- (between 0 and 1)
     begin
        if Random(Gen) > Error_Rate then
-	  delay Duration(Random(Gen) * 5.0);
+	  delay Duration(5.0);
 	  return X + 10;
-       else 
-	  delay Duration(Random(Gen) * 1.0);
+       else
+	  delay Duration(1.0);
 	  raise Count_Failed;
        end if;
     end Unreliable_Slow_Add;
@@ -78,35 +76,36 @@ procedure exercise8 is
         Put_Line ("Worker" & Integer'Image(Initial) & " started");
 
         loop
-            Put_Line ("Worker" & Integer'Image(Initial) & " started round" & Integer'Image(Round_Num));
-            Round_Num := Round_Num + 1;
-	    
-	    ------------------------------------------
-            -- PART 1: Select-Then-Abort statement
-            ------------------------------------------
-	    
-	    begin
-	       Num := Unreliable_Slow_Add(Num);
-	    exception
-	       when Count_Failed =>
-		  Manager.Signal_Abort;
-	    end;
-	    
-	    Manager.Finished;
-            
-            if Manager.Commit = True then
-                Put_Line ("  Worker" & Integer'Image(Initial) & " comitting" & Integer'Image(Num));
-            else
-                Put_Line ("  Worker" & Integer'Image(Initial) &
-                             " reverting from" & Integer'Image(Num) &
-			    " to" & Integer'Image(Prev));
-		
-		Num := Prev;
-		
-            end if;
 
-            Prev := Num;
-            delay 0.5;
+  	    ------------------------------------------
+        -- PART 1: Select-Then-Abort statement
+
+        select  -- if another node has fucked up
+          Manager.Wait_Until_Aborted;
+          Num := Prev + 5;
+          Put_Line ("Worker" & Integer'Image(Initial) & " is doing forward recovery ");
+
+        then abort -- main code
+          Put_Line ("Worker" & Integer'Image(Initial) & " started round" & Integer'Image(Round_Num));
+          Round_Num := Round_Num + 1;
+
+            begin
+  	           Num := Unreliable_Slow_Add(Num);
+  	        exception
+  	           when Count_Failed => --if this node fucks up
+                 Put_Line ("Worker" & Integer'Image(Initial) & " failed! ");
+  		           Manager.Signal_Abort; -- Karen notifies the manager
+  	        end;
+
+        end select;
+
+        ------------------------------------------
+        Manager.Finished;
+
+        Put_Line ("  Worker" & Integer'Image(Initial) & " comitting" & Integer'Image(Num));
+  		  Prev := Num;
+
+        delay 0.5;
 
         end loop;
     end Transaction_Worker;
@@ -120,4 +119,3 @@ procedure exercise8 is
 begin
     Reset(Gen); -- Seed the random number generator
 end exercise8;
-
